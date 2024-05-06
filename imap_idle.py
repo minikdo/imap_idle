@@ -128,9 +128,9 @@ def main():
         except KeyboardInterrupt:
             break
 
-if __name__ == '__main__':
-    main()
-
     server.idle_done()
     print("\nIDLE mode done")
     server.logout()
+
+if __name__ == '__main__':
+    main()
