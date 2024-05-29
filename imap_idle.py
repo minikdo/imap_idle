@@ -20,7 +20,7 @@ from .settings import (
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='debug.log',
+logging.basicConfig(filename='/tmp/imap_idle_debug.log',
                     encoding='utf-8',
                     level=logging.DEBUG,
                     format='%(asctime)s %(message)s',
@@ -40,11 +40,8 @@ def get_password_with_gpg(encrypted_pass):
 
 
 def get_password_from_file(passwordfile):
-    file = open(passwordfile)
-    for line in file:
-        if line.startswith("Pass"):
-            return line.split(" ")[1].rstrip()
-    return None
+    with open(passwordfile) as f:
+        return f.readlines()[0].rstrip()
 
 
 def imap_login():
