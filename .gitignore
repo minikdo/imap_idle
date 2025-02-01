@@ -2,4 +2,5 @@ recipients.py
 __pycache__
 *.log
 settings.py
+secrets.json
 

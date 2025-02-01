@@ -1,133 +1,120 @@
 #!/usr/bin/env python3
 
-# Open a connection in IDLE mode and wait for notifications from the
-# server.
+import sys
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from email.header import decode_header, make_header
 
-import gpg
 from imapclient import IMAPClient
-import logging
-import email.header
-
-import time
-
-from .settings import (
-    HOST,
-    PORT,
-    USERNAME,
-    ENCRYPTED_PASS,
-    PASSWORDFILE,
-)
 
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(filename='/tmp/imap_idle_debug.log',
-                    encoding='utf-8',
-                    level=logging.DEBUG,
-                    format='%(asctime)s %(message)s',
-                    datefmt='%Y-%m-%d %I:%M:%S %p')
+class Imap:
+    """ Connects to IMAP server and sets IDLE mode
+    to wait for new messages. """
 
+    secrets = (Path(__file__).parent / "secrets.json").resolve()
+    with open(secrets, encoding="utf-8") as f:
+        secrets = json.loads(f.read())
+        config = SimpleNamespace(**secrets)
 
-def get_password_with_gpg(encrypted_pass):
-    with open(
-            encrypted_pass,
-            "rb") as cfile:
+    def __init__(self) -> None:
+        print(f"Connecting to {self.config.HOST}")
+        self.server = self.login()
+
+    def get_password(self, passwordfile) -> str:
+        """ Gets imap password from a local file. """
+        with open(passwordfile, encoding="utf-8") as f:
+            password = f.readlines()[0].rstrip()
+        return password
+
+    def login(self):
+        """ Logs in and start IDLE mode. """
+        password = self.get_password(self.config.PASSWORDFILE)
+        server = IMAPClient(self.config.HOST, self.config.PORT)
+        server.login(self.config.USERNAME, password)
+        server.select_folder("INBOX")
+        return server
+
+    def start_idle(self) -> None:
+        self.server.idle()
+        print("Connection is now in IDLE mode, quit with ^c")
+
+    def check_new(self) -> bool:
+        """ Checks if there are messages with flag RECENT. """
         try:
-            plaintext, result, verify_result = gpg.Context().decrypt(cfile)
-        except gpg.errors.GPGMEError as e:
-            plaintext = None
-            print(e)
-        return plaintext.decode().rstrip()
+            resp = self.server.idle_check(timeout=30)
+        except KeyboardInterrupt:
+            sys.exit(0)
+        if len(resp) > 1 and resp[1][1].decode() == 'RECENT':
+            return True
+        return False
 
+    def get_recent_ids(self):
+        return self.server.search(['RECENT'])
 
-def get_password_from_file(passwordfile):
-    with open(passwordfile) as f:
-        return f.readlines()[0].rstrip()
+    def fetch_messages(self, recent_ids):
+        return self.server.fetch(recent_ids, ['ENVELOPE'])
 
+    def decode_utf8(self, data) -> str:
+        decoded = make_header(decode_header(data))
+        return str(decoded)
 
-def imap_login():
-    password = get_password_from_file(PASSWORDFILE)
-    server = IMAPClient(HOST, PORT)
-    server.login(USERNAME, password)
-    server.select_folder("INBOX")
-    server.idle()
-    print("Connection is now in IDLE mode, quit with ^c")
-    return server
+    def process_envelope(self, msg) -> tuple[str, ...]:
+        msgid, data = msg
+        envelope = data[b'ENVELOPE']
+        return (
+            msgid,
+            self.decode_utf8(str(envelope.sender[0])),
+            self.decode_utf8(envelope.subject.decode()),
+            envelope.date,
+        )
+
+    def print_msgs(self, msgs_ids) -> None:
+        msgs = self.fetch_messages(msgs_ids)
+        for msg in msgs.items():
+            msgid, sender, subject, date = self.process_envelope(msg)
+
+            print(f"ID #{msgid}, from: {sender}",
+                  f"{subject}, received {date}")
+
 
 def main():
 
-    server = imap_login()
-    
-    login_time = time.time()
-    
+    imap = Imap()
+
+    if sys.argv[1] == '-l':
+        # Only fetch recent emails and exit
+        msgs_ids = imap.get_recent_ids()
+        imap.print_msgs(msgs_ids)
+        sys.exit(0)
+
+    imap.start_idle()
+
     previous_msgs = []
-    
+
     while True:
-        time_start = time.time()
-        try:
-            # Wait for up to 30 seconds for an IDLE response
-            responses = server.idle_check(timeout=30)
-    
-            if responses and len(responses) > 1:
-                if responses[1][1].decode() == 'RECENT':
-    
-                    server.idle_done()
-    
-                    recent_messages = server.search(['RECENT'])
-    
-                    messages = [
-                        m
-                        for m in recent_messages
-                        if m not in previous_msgs
-                    ]
-                    
-                    for msgid, data in server\
-                            .fetch(messages, ['ENVELOPE'])\
-                            .items():
-    
-                        envelope = data[b'ENVELOPE']
-    
-                        senders = [
-                            str(sender)
-                            for sender in envelope.sender
-                        ]
-    
-                        subject = envelope.subject.decode()
-    
-                        if subject.lower().startswith("=?utf-8?"):
-                            subject, _ = email.header.decode_header(subject)[0]
-                            subject = subject.decode()
-                            
-                        print(f"ID #{msgid}, from: {senders}", end=" ")
-                        print(f"{subject}, received {envelope.date}")
-    
-                    previous_msgs.extend(messages)
-    
-                    server.remove_flags(previous_msgs, [b'\\Seen'])
-                    
-                    server.idle()
 
-            if responses:
-                logger.debug('This message should go to the log file')
-    
-            time_end = time.time()
-    
-            if 'Still here' not in str(responses):
-                if (time.time() - login_time) > 300:
-                    logger.warning("Still here is missing more than 300s!")
-                    logger.debug("restarting IDLE mode...")
-                    server.idle_done()
-                    server.idle()
-            else:
-                login_time = time.time()    
-            
-            logger.debug(f"while loop end {time_end - time_start}")
-    
-        except KeyboardInterrupt:
-            break
+        if not imap.check_new():
+            continue
 
-    server.idle_done()
-    print("\nIDLE mode done")
-    server.logout()
+        # Stop IDLE mode
+        imap.server.idle_done()
+
+        msgs_ids = [
+            m
+            for m in imap.get_recent_ids()
+            if m not in previous_msgs
+        ]
+
+        imap.print_msgs(msgs_ids)
+
+        previous_msgs.extend(msgs_ids)
+        imap.server.remove_flags(previous_msgs, [b'\\Seen'])
+
+        # Resume IDLE mode
+        imap.server.idle()
+
 
 if __name__ == '__main__':
     main()
