@@ -83,7 +83,8 @@ def main():
 
     imap = Imap()
 
-    if sys.argv[1] == '-l':
+    argv = sys.argv
+    if len(argv) > 1 and argv[1] == '-l':
         # Only fetch recent emails and exit
         msgs_ids = imap.get_recent_ids()
         imap.print_msgs(msgs_ids)
