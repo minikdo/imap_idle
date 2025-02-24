@@ -83,11 +83,14 @@ def main():
 
     imap = Imap()
 
+    # Fetch recent messages ids
+    msgs_ids = imap.get_recent_ids()
+    imap.print_msgs(msgs_ids)
+    print("recent ids:", msgs_ids)
+    imap.server.remove_flags(msgs_ids, [b'\\Seen'])
+
     argv = sys.argv
     if len(argv) > 1 and argv[1] == '-l':
-        # Only fetch recent emails and exit
-        msgs_ids = imap.get_recent_ids()
-        imap.print_msgs(msgs_ids)
         sys.exit(0)
 
     imap.start_idle()
