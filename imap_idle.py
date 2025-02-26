@@ -86,8 +86,8 @@ def main():
     # Fetch recent messages ids
     msgs_ids = imap.get_recent_ids()
     imap.print_msgs(msgs_ids)
-    print("recent ids:", msgs_ids)
-    imap.server.remove_flags(msgs_ids, [b'\\Seen'])
+    # print("recent ids:", msgs_ids)
+    # imap.server.remove_flags(msgs_ids, [b'\\Seen'])
 
     argv = sys.argv
     if len(argv) > 1 and argv[1] == '-l':
@@ -96,6 +96,7 @@ def main():
     imap.start_idle()
 
     previous_msgs = []
+    previous_msgs.extend(msgs_ids)
 
     while True:
 
